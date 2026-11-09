@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>楽譜音符名読み当てゲーム</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-900 text-white min-h-screen flex flex-col items-center p-4">
+<h1 class="text-2xl font-bold mb-1 text-center">🎵 楽譜音符名クイズ</h1>
+<p class="text-gray-400 text-sm mb-4 text-center">五線譜の音符名を入力してください（C〜Bまたはド〜シ）</p>
+
+<canvas id="c" class="bg-white rounded-xl mb-4 shadow-xl" style="max-width:100%"></canvas>
+
+<div class="flex gap-3 mb-4 items-center flex-wrap justify-center">
+  <input id="answer" type="text" maxlength="2" placeholder="例: C, D, ド, レ"
+    class="bg-gray-800 border-2 border-gray-600 rounded-lg px-4 py-2 text-xl text-center w-28 font-bold"
+    autocomplete="off">
+  <button id="checkBtn" class="bg-green-600 hover:bg-green-500 px-5 py-2 rounded-lg font-bold transition">答える</button>
+</div>
+
+<div id="feedback" class="text-center text-lg font-bold min-h-7 mb-3"></div>
+
+<div class="grid grid-cols-3 gap-4 text-center text-sm mb-4">
+  <div>正解 <span id="correct" class="text-green-400 font-bold text-xl">0</span></div>
+  <div>不正解 <span id="wrong" class="text-red-400 font-bold text-xl">0</span></div>
+  <div>連続 <span id="streak" class="text-yellow-400 font-bold text-xl">0</span></div>
+</div>
+
+<div class="flex gap-3 mb-3 flex-wrap justify-center">
+  <label class="text-xs text-gray-300 flex items-center gap-2">
+    <input type="checkbox" id="treble" checked> ト音記号
+  </label>
+  <label class="text-xs text-gray-300 flex items-center gap-2">
+    <input type="checkbox" id="bass"> ヘ音記号
+  </label>
+  <label class="text-xs text-gray-300 flex items-center gap-2">
+    記譜: <select id="notation" class="bg-gray-800 border border-gray-600 rounded px-2 py-0.5 text-xs">
+      <option value="en">英語(C,D,E...)</option>
+      <option value="jp">日本語(ド,レ,ミ...)</option>
+    </select>
+  </label>
+</div>
+<button id="nextBtn" class="bg-gray-700 hover:bg-gray-600 px-5 py-2 rounded text-sm transition">スキップ →</button>
+
+<script>
+const cv=document.getElementById('c');
+const ctx=cv.getContext('2d');
+const W=cv.width=Math.min(window.innerWidth-32,400);
+const H=cv.height=200;
+
+// Treble clef notes by position (line/space from bottom, 0=below ledger line C4)
+// Position 0=C4, 1=D4, 2=E4, 3=F4, 4=G4, 5=A4, 6=B4, 7=C5...
+// In treble: lines from bottom = E4(pos2),G4(pos4),B4(pos6),D5(pos8),F5(pos10)
+// spaces = F4(pos3),A4(pos5),C5(pos7),E5(pos9)
+const EN_NOTES=['C','D','E','F','G','A','B'];
+const JP_NOTES=['ド','レ','ミ','ファ','ソ','ラ','シ'];
+
+// Treble clef: pos 0=C4(ledger), 1=D4, 2=E4(1st line), 3=F4, 4=G4(2nd line), 5=A4, 6=B4(3rd line), 7=C5, 8=D5(4th line), 9=E5, 10=F5(5th line), 11=G5, 12=A5(ledger)
+const TREBLE_RANGE={min:0,max:12};
+// Bass clef: pos 0=G2(ledger), 1=A2, 2=B2(1st line), 3=C3, 4=D3(2nd), 5=E3, 6=F3(3rd), 7=G3, 8=A3(4th), 9=B3, 10=C4(5th), 11=D4, 12=E4(ledger)
+
+let currentNote,currentClef,correct=0,wrong=0,streak=0;
+
+const STAFF_Y=50;
+const LINE_SPACING=20;
+const LINES=5;
+
+function getStaffLineY(lineNum){ // lineNum 1-5 from bottom
+  return STAFF_Y+(LINES-lineNum)*LINE_SPACING;
+}
+
+function notePosToY(pos, clef){
+  // pos 0 = C4 for treble, G2 for bass
+  const baseY=getStaffLineY(1)+LINE_SPACING; // below 1st line
+  return baseY - pos*(LINE_SPACING/2);
+}
+
+function drawStaff(clef){
+  ctx.fillStyle='#fff';
+  ctx.fillRect(0,0,W,H);
+
+  // Draw 5 lines
+  ctx.strokeStyle='#333';
+  ctx.lineWidth=1.5;
+  for(let i=1;i<=5;i++){
+    const y=getStaffLineY(i);
+    ctx.beginPath();
+    ctx.moveTo(40,y);
+    ctx.lineTo(W-40,y);
+    ctx.stroke();
+  }
+
+  // Clef symbol
+  ctx.font='bold 60px serif';
+  ctx.fillStyle='#222';
+  if(clef==='treble'){
+    ctx.fillText('𝄞',10,STAFF_Y+90);
+  } else {
+    ctx.fillText('𝄢',10,STAFF_Y+40);
+  }
+}
+
+function drawNote(pos, clef){
+  const y=notePosToY(pos,clef);
+  const noteX=W/2;
+
+  // Ledger lines
+  ctx.strokeStyle='#333';
+  ctx.lineWidth=1.5;
+  if(pos<=0){
+    for(let p=0;p>=pos;p-=2){
+      const ly=notePosToY(p,clef);
+      ctx.beginPath(); ctx.moveTo(noteX-20,ly); ctx.lineTo(noteX+20,ly); ctx.stroke();
+    }
+  }
+  if(pos>=10){
+    for(let p=10;p<=pos;p+=2){
+      const ly=notePosToY(p,clef);
+      ctx.beginPath(); ctx.moveTo(noteX-20,ly); ctx.lineTo(noteX+20,ly); ctx.stroke();
+    }
+  }
+
+  // Note head (filled ellipse)
+  ctx.save();
+  ctx.translate(noteX,y);
+  ctx.rotate(-0.2);
+  ctx.beginPath();
+  ctx.ellipse(0,0,10,8,0,0,Math.PI*2);
+  ctx.fillStyle='#111';
+  ctx.fill();
+  ctx.restore();
+
+  // Stem
+  ctx.strokeStyle='#111';
+  ctx.lineWidth=2;
+  ctx.beginPath();
+  if(pos<6){
+    ctx.moveTo(noteX+9,y); ctx.lineTo(noteX+9,y-45);
+  } else {
+    ctx.moveTo(noteX-9,y); ctx.lineTo(noteX-9,y+45);
+  }
+  ctx.stroke();
+}
+
+function newQuestion(){
+  const useTreble=document.getElementById('treble').checked;
+  const useBass=document.getElementById('bass').checked;
+  const clefs=[];
+  if(useTreble) clefs.push('treble');
+  if(useBass) clefs.push('bass');
+  if(clefs.length===0){ currentClef='treble'; }
+  else { currentClef=clefs[Math.floor(Math.random()*clefs.length)]; }
+  const range=TREBLE_RANGE;
+  currentNote=range.min+Math.floor(Math.random()*(range.max-range.min+1));
+  drawStaff(currentClef);
+  drawNote(currentNote,currentClef);
+  document.getElementById('answer').value='';
+  document.getElementById('feedback').textContent='';
+  document.getElementById('answer').focus();
+}
+
+function getNoteName(pos, notation){
+  const idx=((pos%7)+7)%7;
+  return notation==='jp'?JP_NOTES[idx]:EN_NOTES[idx];
+}
+
+function check(){
+  const notation=document.getElementById('notation').value;
+  const ans=document.getElementById('answer').value.trim();
+  const correct_name=getNoteName(currentNote,notation);
+  const correct_en=getNoteName(currentNote,'en');
+  if(ans.toUpperCase()===correct_name.toUpperCase()||ans.toUpperCase()===correct_en.toUpperCase()){
+    correct++;streak++;
+    document.getElementById('feedback').textContent=`✅ 正解！ ${correct_en} (${getNoteName(currentNote,'jp')})`;
+    document.getElementById('feedback').className='text-center text-lg font-bold min-h-7 mb-3 text-green-400';
+  } else {
+    wrong++;streak=0;
+    document.getElementById('feedback').textContent=`❌ 不正解。正解は ${correct_en} (${getNoteName(currentNote,'jp')})`;
+    document.getElementById('feedback').className='text-center text-lg font-bold min-h-7 mb-3 text-red-400';
+  }
+  document.getElementById('correct').textContent=correct;
+  document.getElementById('wrong').textContent=wrong;
+  document.getElementById('streak').textContent=streak;
+  setTimeout(newQuestion,1500);
+}
+
+document.getElementById('checkBtn').addEventListener('click',check);
+document.getElementById('answer').addEventListener('keydown',e=>{if(e.key==='Enter') check();});
+document.getElementById('nextBtn').addEventListener('click',newQuestion);
+newQuestion();
+</script>
+</body>
+</html>
